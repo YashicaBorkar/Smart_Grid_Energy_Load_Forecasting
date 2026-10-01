@@ -1,4 +1,4 @@
-SmartGrid AI Flask Dashboard
+SmartGrid  Flask Dashboard
 
 Files:
 - app.py

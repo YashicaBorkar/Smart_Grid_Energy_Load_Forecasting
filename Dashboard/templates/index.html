@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmartGrid AI | GRU Forecasting</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-icon">⚡</div><div><h2>SmartGrid AI</h2><p>Energy intelligence</p></div></div>
+      <div class="side-label">DASHBOARD</div>
+      <a class="nav active" href="/">▦ &nbsp; Overview</a>
+      <div class="side-bottom"><span class="pulse"></span> GRU Model • {{ device }}</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><p class="eyebrow">ENERGY LOAD MANAGEMENT</p><h1>Forecast Dashboard</h1><p class="subtitle">24-hour electricity demand forecast powered by your trained GRU model.</p></div>
+        <div class="status"><span class="pulse"></span> {% if error %}Needs attention{% else %}Model ready{% endif %}</div>
+      </header>
+
+      {% if error %}
+      <div class="alert error"><strong>Forecast could not load</strong><p>{{ error }}</p><p>Check that PJME_hourly.csv and your trained GRU checkpoint are in the configured locations, and confirm that the GRU architecture matches your training notebook.</p></div>
+      {% endif %}
+
+      {% if latest %}
+      <section class="metrics">
+        <div class="metric"><div class="metric-label">Latest recorded demand</div><div class="metric-value">{{ latest }} <small>MW</small></div><div class="metric-foot">{{ latest_time }}</div></div>
+        <div class="metric"><div class="metric-label">Historical peak</div><div class="metric-value">{{ historical_peak }} <small>MW</small></div><div class="metric-foot">Maximum in loaded dataset</div></div>
+        <div class="metric"><div class="metric-label">Average demand</div><div class="metric-value">{{ avg }} <small>MW</small></div><div class="metric-foot">Across loaded dataset</div></div>
+        <div class="metric accent"><div class="metric-label">Forecast peak</div><div class="metric-value">{{ forecast_peak }} <small>MW</small></div><div class="metric-foot">{{ forecast_peak_time }}</div></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><div><h2>Demand forecast</h2><p>Recent 168 hours and next 24 hours</p></div><span class="chip">GRU • 24H</span></div>
+        <div id="forecastChart" class="chart"></div>
+      </section>
+
+      <div class="two-col">
+        <section class="panel">
+          <div class="panel-head"><div><h2>Forecast values</h2><p>Hourly predicted demand</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Forecast time</th><th>Demand (MW)</th></tr></thead><tbody>
+          {% for row in forecast_table %}<tr><td>{{ row.time }}</td><td>{{ row.demand }}</td></tr>{% endfor %}
+          </tbody></table></div>
+          <a class="download" href="data:text/csv;charset=utf-8,Datetime%2CForecast_MW%0A{% for row in forecast_table %}{{ row.time | urlencode }}%2C{{ row.demand | replace(',', '') }}%0A{% endfor %}" download="gru_forecast.csv">↓ Download forecast CSV</a>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><div><h2>Peak demand alerts</h2><p>Set a threshold to flag forecast hours</p></div></div>
+          <form method="post" class="controls">
+            <label>Peak alert threshold (MW)<input type="number" name="threshold" value="{{ threshold }}" min="0" step="500"></label>
+            <input type="hidden" name="supply" value="{{ supply }}">
+            <input type="hidden" name="residential" value="{{ shares.Residential }}">
+            <input type="hidden" name="industrial" value="{{ shares.Industrial }}">
+            <input type="hidden" name="commercial" value="{{ shares.Commercial }}">
+            <button type="submit">Update threshold</button>
+          </form>
+          {% if peak_table %}<div class="alert warning">{{ peak_table|length }} forecast hour(s) meet or exceed the threshold.</div>
+          <div class="table-wrap compact"><table><thead><tr><th>Time</th><th>MW</th></tr></thead><tbody>{% for row in peak_table %}<tr><td>{{ row.time }}</td><td>{{ row.demand }}</td></tr>{% endfor %}</tbody></table></div>
+          {% else %}<div class="alert success">No forecast hours cross this threshold.</div>{% endif %}
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head"><div><h2>Energy allocation simulator</h2></div></div>
+        <form method="post" class="allocation-form">
+          <div class="controls grid-controls">
+            <label>Available supply (MW)<input type="number" name="supply" min="0" step="500" value="{{ supply }}"></label>
+            <label>Residential (%)<input type="number" name="residential" min="0" max="100" value="{{ shares.Residential }}"></label>
+            <label>Industrial (%)<input type="number" name="industrial" min="0" max="100" value="{{ shares.Industrial }}"></label>
+            <label>Commercial (%)<input type="number" name="commercial" min="0" max="100" value="{{ shares.Commercial }}"></label>
+            <input type="hidden" name="threshold" value="{{ threshold }}">
+          </div>
+          <button type="submit">Simulate allocation</button>
+        </form>
+        {% if allocation %}
+        <div class="allocation-grid">{% for item in allocation %}
+          <div class="allocation-card"><p>{{ item.sector }}</p><strong>{{ "{:,.0f}".format(item.mw) }} MW</strong><span>{{ item.pct }}% selected share</span><div class="bar"><i style="width: {{ (item.pct / (allocation_total if allocation_total else 1) * 100) }}%"></i></div></div>
+        {% endfor %}</div>
+        <p class="hint"></p>
+        {% endif %}
+      </section>
+      {% else %}
+      <section class="panel empty"><div class="empty-icon">⚡</div><h2>Connect your data and GRU checkpoint</h2><p>Place the historical CSV and trained GRU checkpoint in the paths configured in <code>app.py</code>, then refresh this page.</p></section>
+      {% endif %}
+    </main>
+  </div>
+  {% if latest %}
+  <script>
+    const historyX = {{ chart_labels | tojson }};
+    const historyY = {{ chart_actual | tojson }};
+    const forecastX = {{ forecast_labels | tojson }};
+    const forecastY = {{ forecast_values | tojson }};
+    Plotly.newPlot("forecastChart", [
+      {x: historyX, y: historyY, type:"scatter", mode:"lines", name:"Historical demand", line:{color:"#8292a8", width:2}},
+      {x: forecastX, y: forecastY, type:"scatter", mode:"lines+markers", name:"GRU forecast", line:{color:"#d7a0b3", width:3}, marker:{size:5}}
+    ], {
+      paper_bgcolor:"rgba(0,0,0,0)", plot_bgcolor:"rgba(0,0,0,0)",
+      font:{color:"#cbd5e1"}, margin:{l:55,r:20,t:15,b:65},
+      xaxis:{title:"Time", type:"date", gridcolor:"#233247", tickangle:0, nticks:6, tickformat:"%b %d<br>%H:%M"},
+      yaxis:{title:"Demand (MW)", gridcolor:"#233247"},
+      legend:{orientation:"h", y:1.12}, hovermode:"x unified"
+    }, {responsive:true, displayModeBar:false});
+  </script>
+  {% endif %}
+</body>
+</html>
